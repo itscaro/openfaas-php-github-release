@@ -7,13 +7,14 @@ use GuzzleHttp\Exception\RequestException;
 
 class Handler
 {
+    private const CONTENT_TYPE_JSON = 'application/json';
+    private const CONTENT_TYPE_BINARY = 'binary/octet-stream';
+
     private $client;
     private $example;
 
     public function __construct() {
-        $this->client = new Client([
-            'base_uri' => 'https://api.github.com',
-        ]);
+        $this->client = new Client([]);
 
         $this->example = json_encode([
             'repo' => 'owner/repo',
@@ -21,15 +22,19 @@ class Handler
         ]);
     }
 
+    /**
+     * @param string $data
+     */
     public function handle(string $data): void {
-        if ($_SERVER['Http_Content_Type'] === 'application/json') {
+        $download = $_SERVER['Http_Content_Type'] === self::CONTENT_TYPE_BINARY;
+        if (\in_array($_SERVER['Http_Content_Type'], [self::CONTENT_TYPE_JSON, self::CONTENT_TYPE_BINARY], true)) {
             $data = json_decode($data, true);
-            if ($data === null || !isset($data['repo'])) {
+            if ($data === null || empty($data['repo'])) {
                 echo $this->example;
                 return;
             } else {
                 $repo = $data['repo'];
-                $arch = $data['arch'];
+                $arch = $data['arch'] ?? null;
             }
         } else {
             echo "Please use JSON in this format:\n" . $this->example;
@@ -37,27 +42,50 @@ class Handler
         }
 
         try {
-            $response = $this->client->get('/repos/'.$repo.'/releases/latest');
+            $response = $this->client->get('https://api.github.com/repos/'.$repo.'/releases/latest');
             $jsonResponse = json_decode($response->getBody()->getContents(), true);
 
-            $data = [
+            if ($jsonResponse === null || empty($jsonResponse['tag_name'])) {
+                echo json_encode([
+                    'error' => 'Could not find tag'
+                ]);
+                return;
+            }
+
+            $resData = [
                 'version' => $jsonResponse['tag_name'],
             ];
 
             foreach ($jsonResponse['assets'] as $asset) {
                 if ($this->isArch($arch, $asset['browser_download_url'])) {
-                    $data['name'] = $asset['name'];
-                    $data['url'] = $asset['browser_download_url'];
+                    $resData['name'] = $asset['name'];
+                    $resData['url'] = $asset['browser_download_url'];
+
+                    if ($download && !empty($resData['url'])) {
+                        $tmpFile = sprintf("/tmp/%s-%s-%s", $resData['name'], $resData['version'], md5($resData['url']));
+
+                        if (!file_exists($tmpFile)) {
+                            $this->client->get($resData['url'], [\GuzzleHttp\RequestOptions::SINK => $tmpFile]);
+                        }
+
+                        echo file_get_contents($tmpFile);
+                    }
                 }
             }
 
-            echo json_encode($data);
+            echo json_encode($resData);
         } catch (RequestException $e) {
             echo $e->getMessage();
         }
     }
 
-    private function isArch($arch, $asset) {
+    /**
+     * @param string $arch
+     * @param string $asset
+     *
+     * @return bool
+     */
+    private function isArch($arch, string $asset): bool {
         switch ($arch) {
             case 'windows':
                 return strpos($asset, '.exe') !== false;
