@@ -1,4 +1,9 @@
-Function to get the latest release on GitHub and URL to the asset
+### Function to get the latest release on GitHub and URL to the asset
+
+*To be used with OpenFaaS*
+
+#### Usage
+Use header `Content-Type: application/json` or header `binary/octet-stream` to download the asset 
 
 Request
 
